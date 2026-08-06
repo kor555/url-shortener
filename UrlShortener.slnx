@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/backend/">
+    <Project Path="backend/UrlShortener.Api/UrlShortener.Api.csproj" />
+  </Folder>
+</Solution>

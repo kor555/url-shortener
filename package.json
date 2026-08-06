@@ -1,0 +1,19 @@
+{
+  "name": "url-shortener",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "dev:backend": "dotnet watch run --project backend/UrlShortener.Api",
+    "build": "npm run build --workspace=frontend && dotnet build",
+    "build:frontend": "npm run build --workspace=frontend",
+    "build:backend": "dotnet build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
