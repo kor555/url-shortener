@@ -7,6 +7,10 @@ interface PlatformTarget {
   url: string;
 }
 
+interface PlatformTargetView extends PlatformTarget {
+  clickCount: number;
+}
+
 interface UrlItem {
   id: number;
   code: string;
@@ -15,7 +19,8 @@ interface UrlItem {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
-  platformTargets: PlatformTarget[];
+  viewCount: number;
+  platformTargets: PlatformTargetView[];
 }
 
 type LinkMode = 'single' | 'platform';
@@ -260,6 +265,7 @@ function App() {
               <button type="button" onClick={() => copyToClipboard(item.shortUrl)}>
                 Copy
               </button>
+              <span className="total-clicks">{item.viewCount} clicks</span>
             </div>
 
             {editingCode === item.code ? (
@@ -302,7 +308,11 @@ function App() {
               <ul className="platform-list">
                 {item.platformTargets.map((target) => (
                   <li key={target.platform}>
-                    <strong>{target.platform}:</strong> {target.url}
+                    <div className="platform-list-header">
+                      <strong>{target.platform}</strong>
+                      <span className="click-count">{target.clickCount} clicks</span>
+                    </div>
+                    <div className="platform-list-url">{target.url}</div>
                   </li>
                 ))}
               </ul>

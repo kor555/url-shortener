@@ -25,6 +25,9 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
                 target_url TEXT NOT NULL,
                 UNIQUE (url_id, platform)
             );
+
+            ALTER TABLE urls ADD COLUMN IF NOT EXISTS view_count BIGINT NOT NULL DEFAULT 0;
+            ALTER TABLE url_platform_targets ADD COLUMN IF NOT EXISTS click_count BIGINT NOT NULL DEFAULT 0;
             """;
         await cmd.ExecuteNonQueryAsync();
     }
@@ -38,7 +41,7 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
         await ReplacePlatformTargets(conn, transaction, row.Id, platformTargets);
 
         await transaction.CommitAsync();
-        return row with { PlatformTargets = platformTargets };
+        return row with { PlatformTargets = platformTargets.Select(t => new PlatformTargetView(t.Platform, t.Url, 0)).ToList() };
     }
 
     public async Task<IReadOnlyList<UrlRecord>> GetAllUrls()
@@ -48,7 +51,7 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
         var rows = new List<UrlRecord>();
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = "SELECT id, original_url, is_active, created_at, updated_at FROM urls ORDER BY id DESC";
+            cmd.CommandText = "SELECT id, original_url, is_active, created_at, updated_at, view_count FROM urls ORDER BY id DESC";
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
@@ -88,7 +91,7 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
                 is_active = COALESCE($2, is_active),
                 updated_at = now()
             WHERE id = $3
-            RETURNING id, original_url, is_active, created_at, updated_at
+            RETURNING id, original_url, is_active, created_at, updated_at, view_count
             """;
         cmd.Parameters.AddWithValue((object?)originalUrl ?? DBNull.Value);
         cmd.Parameters.AddWithValue((object?)isActive ?? DBNull.Value);
@@ -116,7 +119,9 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
 
         await transaction.CommitAsync();
 
-        var finalTargets = platformTargets ?? await GetPlatformTargets(conn, id);
+        var finalTargets = platformTargets is null
+            ? await GetPlatformTargets(conn, id)
+            : platformTargets.Select(t => new PlatformTargetView(t.Platform, t.Url, 0)).ToList();
         return row with { PlatformTargets = finalTargets };
     }
 
@@ -129,13 +134,39 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
         return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
+    public async Task RecordVisit(long id, string? matchedPlatform)
+    {
+        await using var conn = await db.OpenConnectionAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = transaction;
+            cmd.CommandText = "UPDATE urls SET view_count = view_count + 1 WHERE id = $1";
+            cmd.Parameters.AddWithValue(id);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        if (matchedPlatform is not null)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = transaction;
+            cmd.CommandText = "UPDATE url_platform_targets SET click_count = click_count + 1 WHERE url_id = $1 AND platform = $2";
+            cmd.Parameters.AddWithValue(id);
+            cmd.Parameters.AddWithValue(matchedPlatform);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        await transaction.CommitAsync();
+    }
+
     private static async Task<UrlRecord> InsertUrlRow(NpgsqlConnection conn, NpgsqlTransaction transaction, string originalUrl)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = transaction;
         cmd.CommandText = """
             INSERT INTO urls (original_url) VALUES ($1)
-            RETURNING id, original_url, is_active, created_at, updated_at
+            RETURNING id, original_url, is_active, created_at, updated_at, view_count
             """;
         cmd.Parameters.AddWithValue(originalUrl);
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -146,7 +177,7 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
     private static async Task<UrlRecord?> SelectUrlRow(NpgsqlConnection conn, long id)
     {
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, original_url, is_active, created_at, updated_at FROM urls WHERE id = $1";
+        cmd.CommandText = "SELECT id, original_url, is_active, created_at, updated_at, view_count FROM urls WHERE id = $1";
         cmd.Parameters.AddWithValue(id);
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? MapRow(reader, []) : null;
@@ -172,26 +203,27 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
         }
     }
 
-    private static async Task<IReadOnlyList<PlatformTarget>> GetPlatformTargets(NpgsqlConnection conn, long urlId)
+    private static async Task<IReadOnlyList<PlatformTargetView>> GetPlatformTargets(NpgsqlConnection conn, long urlId)
     {
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT platform, target_url FROM url_platform_targets WHERE url_id = $1 ORDER BY platform";
+        cmd.CommandText = "SELECT platform, target_url, click_count FROM url_platform_targets WHERE url_id = $1 ORDER BY platform";
         cmd.Parameters.AddWithValue(urlId);
         await using var reader = await cmd.ExecuteReaderAsync();
 
-        var list = new List<PlatformTarget>();
+        var list = new List<PlatformTargetView>();
         while (await reader.ReadAsync())
         {
-            list.Add(new PlatformTarget(reader.GetString(0), reader.GetString(1)));
+            list.Add(new PlatformTargetView(reader.GetString(0), reader.GetString(1), reader.GetInt64(2)));
         }
         return list;
     }
 
-    private static UrlRecord MapRow(NpgsqlDataReader reader, IReadOnlyList<PlatformTarget> platformTargets) => new(
+    private static UrlRecord MapRow(NpgsqlDataReader reader, IReadOnlyList<PlatformTargetView> platformTargets) => new(
         reader.GetInt64(0),
         reader.GetString(1),
         reader.GetBoolean(2),
         reader.GetFieldValue<DateTimeOffset>(3),
         reader.GetFieldValue<DateTimeOffset>(4),
+        reader.GetInt64(5),
         platformTargets);
 }

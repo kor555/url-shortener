@@ -54,7 +54,11 @@ public class UrlService(IUrlRepository repository, IBase62Service base62, IConfi
         if (record is null) return null;
 
         var platform = DetectPlatform(userAgent);
-        var destination = record.PlatformTargets.FirstOrDefault(t => t.Platform == platform)?.Url ?? record.OriginalUrl;
+        var matchedTarget = record.PlatformTargets.FirstOrDefault(t => t.Platform == platform);
+        var destination = matchedTarget?.Url ?? record.OriginalUrl;
+
+        await repository.RecordVisit(id, matchedTarget?.Platform);
+
         return new RedirectTarget(record.IsActive, destination);
     }
 
@@ -80,6 +84,7 @@ public class UrlService(IUrlRepository repository, IBase62Service base62, IConfi
             record.IsActive,
             record.CreatedAt,
             record.UpdatedAt,
+            record.ViewCount,
             record.PlatformTargets);
     }
 

@@ -152,6 +152,13 @@ h1 {
   text-decoration: underline;
 }
 
+.total-clicks {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
 .original-url {
   flex: 1;
   color: #475569;
@@ -187,13 +194,26 @@ h1 {
   gap: 0.25rem;
 }
 
-.platform-list li {
+.platform-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.platform-list-url {
   word-break: break-all;
 }
 
 .platform-list strong {
   text-transform: capitalize;
   color: #334155;
+}
+
+.click-count {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 
 .url-row button,

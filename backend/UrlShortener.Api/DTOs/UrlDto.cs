@@ -4,6 +4,9 @@ namespace UrlShortener.Api.DTOs;
 // is a free-form key (not an enum) so new platforms can be added without a schema change.
 public record PlatformTarget(string Platform, string Url);
 
+// Read-side view of a platform target, with its server-tracked click count.
+public record PlatformTargetView(string Platform, string Url, long ClickCount);
+
 public record CreateUrlRequest(string OriginalUrl, IReadOnlyList<PlatformTarget>? PlatformTargets = null);
 
 public record UpdateUrlRequest(string? OriginalUrl, bool? IsActive, IReadOnlyList<PlatformTarget>? PlatformTargets = null);
@@ -16,7 +19,8 @@ public record UrlResponse(
     bool IsActive,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    IReadOnlyList<PlatformTarget> PlatformTargets);
+    long ViewCount,
+    IReadOnlyList<PlatformTargetView> PlatformTargets);
 
 // Raw row shape passed between the repository and service, before the service
 // adds the derived Code/ShortUrl fields that make up the public UrlResponse.
@@ -26,7 +30,8 @@ public record UrlRecord(
     bool IsActive,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    IReadOnlyList<PlatformTarget> PlatformTargets);
+    long ViewCount,
+    IReadOnlyList<PlatformTargetView> PlatformTargets);
 
 // Result of resolving a short code to where it should redirect, after picking
 // between the default OriginalUrl and any matching platform override.
@@ -52,4 +57,8 @@ public interface IUrlRepository
     // platformTargets: null leaves existing platform targets untouched, a (possibly empty) list replaces them.
     Task<UrlRecord?> UpdateUrl(long id, string? originalUrl, bool? isActive, IReadOnlyList<PlatformTarget>? platformTargets);
     Task<bool> DeleteUrl(long id);
+
+    // Records a visit: always increments the link's total view count, and also bumps the
+    // matching platform target's click count when matchedPlatform names one that exists.
+    Task RecordVisit(long id, string? matchedPlatform);
 }
