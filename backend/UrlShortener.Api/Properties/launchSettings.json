@@ -18,6 +18,7 @@
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
-    }
+    },
+    "applicationUrl": "https://gul.fy:5001;https://localhost:5001"
   }
 }

@@ -1,0 +1,21 @@
+{
+  "extraKnownMarketplaces": {
+    "superpowers-dev": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers"
+      }
+    },
+    "claude-code-graphite": {
+      "source": {
+        "source": "github",
+        "repo": "georgeguimaraes/claude-code-graphite"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "superpowers@superpowers-dev": true,
+    "graphite@claude-code-graphite": true,
+    "graphite-mcp@claude-code-graphite": true
+  }
+}
