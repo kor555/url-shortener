@@ -20,6 +20,7 @@ interface UrlItem {
   createdAt: string;
   updatedAt: string;
   viewCount: number;
+  customCode: string | null;
   platformTargets: PlatformTargetView[];
 }
 
@@ -27,6 +28,16 @@ type LinkMode = 'single' | 'platform';
 
 const findTarget = (targets: PlatformTarget[], platform: string) =>
   targets.find((t) => t.platform === platform)?.url ?? '';
+
+// A taken custom name is disruptive enough (and rare enough) to warrant a popup
+// rather than the usual inline banner, which is easy to miss right above the button.
+const showRequestError = (message: string, setError: (message: string) => void) => {
+  if (message.includes('is already taken')) {
+    window.alert(message);
+    return;
+  }
+  setError(message);
+};
 
 const buildPlatformTargets = (androidUrl: string, iosUrl: string): PlatformTarget[] => {
   const targets: PlatformTarget[] = [];
@@ -56,6 +67,34 @@ function ModeTabs({ mode, onChange }: { mode: LinkMode; onChange: (mode: LinkMod
       >
         Platform-specific
       </button>
+    </div>
+  );
+}
+
+function CustomCodeField({
+  visible,
+  value,
+  onToggle,
+  onChange,
+}: {
+  visible: boolean;
+  value: string;
+  onToggle: () => void;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="custom-code-field">
+      <button type="button" className="link-button" onClick={onToggle}>
+        {visible ? 'Remove custom name' : 'Customize name'}
+      </button>
+      {visible && (
+        <input
+          type="text"
+          placeholder="Coffee"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
     </div>
   );
 }
@@ -104,12 +143,16 @@ function App() {
   const [originalUrl, setOriginalUrl] = useState('');
   const [androidUrl, setAndroidUrl] = useState('');
   const [iosUrl, setIosUrl] = useState('');
+  const [showCustomCode, setShowCustomCode] = useState(false);
+  const [customCode, setCustomCode] = useState('');
 
-  const [editingCode, setEditingCode] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [editMode, setEditMode] = useState<LinkMode>('single');
   const [editValue, setEditValue] = useState('');
   const [editAndroidUrl, setEditAndroidUrl] = useState('');
   const [editIosUrl, setEditIosUrl] = useState('');
+  const [editShowCustomCode, setEditShowCustomCode] = useState(false);
+  const [editCustomCode, setEditCustomCode] = useState('');
 
   const loadItems = () => {
     fetch('/api/urls')
@@ -134,7 +177,11 @@ function App() {
       const res = await fetch('/api/urls', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ originalUrl, platformTargets }),
+        body: JSON.stringify({
+          originalUrl,
+          platformTargets,
+          customCode: showCustomCode ? customCode.trim() : '',
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -145,8 +192,10 @@ function App() {
       setOriginalUrl('');
       setAndroidUrl('');
       setIosUrl('');
+      setShowCustomCode(false);
+      setCustomCode('');
     } catch (err) {
-      setError((err as Error).message);
+      showRequestError((err as Error).message, setError);
     } finally {
       setSubmitting(false);
     }
@@ -162,25 +211,29 @@ function App() {
       });
       if (!res.ok) throw new Error(`API returned ${res.status}`);
       const updated = (await res.json()) as UrlItem;
-      setItems((prev) => prev.map((i) => (i.code === updated.code ? updated : i)));
+      setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
     } catch (err) {
       setError((err as Error).message);
     }
   };
 
   const startEdit = (item: UrlItem) => {
-    setEditingCode(item.code);
+    setEditingId(item.id);
     setEditMode(item.platformTargets.length > 0 ? 'platform' : 'single');
     setEditValue(item.originalUrl);
     setEditAndroidUrl(findTarget(item.platformTargets, 'android'));
     setEditIosUrl(findTarget(item.platformTargets, 'ios'));
+    setEditShowCustomCode(item.customCode !== null);
+    setEditCustomCode(item.customCode ?? '');
   };
 
   const cancelEdit = () => {
-    setEditingCode(null);
+    setEditingId(null);
     setEditValue('');
     setEditAndroidUrl('');
     setEditIosUrl('');
+    setEditShowCustomCode(false);
+    setEditCustomCode('');
   };
 
   const saveEdit = async (item: UrlItem) => {
@@ -190,17 +243,21 @@ function App() {
       const res = await fetch(`/api/urls/${item.code}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ originalUrl: editValue, platformTargets }),
+        body: JSON.stringify({
+          originalUrl: editValue,
+          platformTargets,
+          customCode: editShowCustomCode ? editCustomCode.trim() : '',
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error ?? `API returned ${res.status}`);
       }
       const updated = (await res.json()) as UrlItem;
-      setItems((prev) => prev.map((i) => (i.code === updated.code ? updated : i)));
+      setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
       cancelEdit();
     } catch (err) {
-      setError((err as Error).message);
+      showRequestError((err as Error).message, setError);
     }
   };
 
@@ -210,7 +267,7 @@ function App() {
     try {
       const res = await fetch(`/api/urls/${item.code}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`API returned ${res.status}`);
-      setItems((prev) => prev.filter((i) => i.code !== item.code));
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
     } catch (err) {
       setError((err as Error).message);
     }
@@ -248,6 +305,13 @@ function App() {
           />
         )}
 
+        <CustomCodeField
+          visible={showCustomCode}
+          value={customCode}
+          onToggle={() => setShowCustomCode((v) => !v)}
+          onChange={setCustomCode}
+        />
+
         <button type="submit" disabled={submitting}>
           {submitting ? 'Shortening…' : 'Shorten'}
         </button>
@@ -257,7 +321,7 @@ function App() {
 
       <ul className="url-list">
         {items.map((item) => (
-          <li key={item.code} className={item.isActive ? '' : 'inactive'}>
+          <li key={item.id} className={item.isActive ? '' : 'inactive'}>
             <div className="url-row">
               <a href={item.shortUrl} target="_blank" rel="noreferrer" className="short-link">
                 {item.shortUrl}
@@ -268,7 +332,7 @@ function App() {
               <span className="total-clicks">{item.viewCount} clicks</span>
             </div>
 
-            {editingCode === item.code ? (
+            {editingId === item.id ? (
               <div className="edit-section">
                 <ModeTabs mode={editMode} onChange={setEditMode} />
 
@@ -294,6 +358,13 @@ function App() {
                     onIosChange={setEditIosUrl}
                   />
                 )}
+
+                <CustomCodeField
+                  visible={editShowCustomCode}
+                  value={editCustomCode}
+                  onToggle={() => setEditShowCustomCode((v) => !v)}
+                  onChange={setEditCustomCode}
+                />
               </div>
             ) : (
               <div className="original-row">
@@ -304,7 +375,7 @@ function App() {
               </div>
             )}
 
-            {editingCode !== item.code && item.platformTargets.length > 0 && (
+            {editingId !== item.id && item.platformTargets.length > 0 && (
               <ul className="platform-list">
                 {item.platformTargets.map((target) => (
                   <li key={target.platform}>

@@ -9,7 +9,7 @@ public static class UrlHandler
     {
         try
         {
-            var response = await service.CreateUrl(request.OriginalUrl, request.PlatformTargets);
+            var response = await service.CreateUrl(request.OriginalUrl, request.PlatformTargets, request.CustomCode);
             return Results.Created($"/api/urls/{response.Code}", response);
         }
         catch (InvalidUrlException ex)
@@ -33,7 +33,7 @@ public static class UrlHandler
     {
         try
         {
-            var response = await service.UpdateUrl(code, request.OriginalUrl, request.IsActive, request.PlatformTargets);
+            var response = await service.UpdateUrl(code, request.OriginalUrl, request.IsActive, request.PlatformTargets, request.CustomCode);
             return response is null ? Results.NotFound() : Results.Ok(response);
         }
         catch (InvalidUrlException ex)

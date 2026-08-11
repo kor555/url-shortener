@@ -1,18 +1,26 @@
+using System.Text.RegularExpressions;
 using UrlShortener.Api.DTOs;
 
 namespace UrlShortener.Api.Services;
 
 public class InvalidUrlException(string message) : Exception(message);
 
-public class UrlService(IUrlRepository repository, IBase62Service base62, IConfiguration configuration) : IUrlService
+public partial class UrlService(IUrlRepository repository, IBase62Service base62, IConfiguration configuration) : IUrlService
 {
     private string BaseUrl => configuration["ShortUrl:BaseUrl"] ?? "http://localhost:5104";
 
-    public async Task<UrlResponse> CreateUrl(string originalUrl, IReadOnlyList<PlatformTarget>? platformTargets = null)
+    public async Task<UrlResponse> CreateUrl(string originalUrl, IReadOnlyList<PlatformTarget>? platformTargets = null, string? customCode = null)
     {
         var normalized = NormalizeUrl(originalUrl);
         var normalizedTargets = NormalizePlatformTargets(platformTargets);
-        var record = await repository.InsertUrl(normalized, normalizedTargets);
+
+        string? normalizedCode = null;
+        if (!string.IsNullOrWhiteSpace(customCode))
+        {
+            normalizedCode = await ValidateCustomCode(customCode, currentId: null);
+        }
+
+        var record = await repository.InsertUrl(normalized, normalizedTargets, normalizedCode);
         return ToResponse(record);
     }
 
@@ -24,46 +32,91 @@ public class UrlService(IUrlRepository repository, IBase62Service base62, IConfi
 
     public async Task<UrlResponse?> GetUrl(string code)
     {
-        if (!base62.TryDecode(code, out var id)) return null;
-
-        var record = await repository.GetUrlById(id);
+        var record = await ResolveByCode(code);
         return record is null ? null : ToResponse(record);
     }
 
-    public async Task<UrlResponse?> UpdateUrl(string code, string? originalUrl, bool? isActive, IReadOnlyList<PlatformTarget>? platformTargets = null)
+    public async Task<UrlResponse?> UpdateUrl(string code, string? originalUrl, bool? isActive, IReadOnlyList<PlatformTarget>? platformTargets = null, string? customCode = null)
     {
-        if (!base62.TryDecode(code, out var id)) return null;
+        var existing = await ResolveByCode(code);
+        if (existing is null) return null;
 
         var normalized = originalUrl is null ? null : NormalizeUrl(originalUrl);
         var normalizedTargets = platformTargets is null ? null : NormalizePlatformTargets(platformTargets);
-        var record = await repository.UpdateUrl(id, normalized, isActive, normalizedTargets);
+
+        string? codeToPersist = null;
+        if (customCode is not null)
+        {
+            var trimmed = customCode.Trim();
+            codeToPersist = trimmed.Length == 0 ? "" : await ValidateCustomCode(trimmed, existing.Id);
+        }
+
+        var record = await repository.UpdateUrl(existing.Id, normalized, isActive, normalizedTargets, codeToPersist);
         return record is null ? null : ToResponse(record);
     }
 
     public async Task<bool> DeleteUrl(string code)
     {
-        if (!base62.TryDecode(code, out var id)) return false;
-        return await repository.DeleteUrl(id);
+        var existing = await ResolveByCode(code);
+        return existing is not null && await repository.DeleteUrl(existing.Id);
     }
 
     public async Task<RedirectTarget?> GetRedirectTarget(string code, string? userAgent)
     {
-        if (!base62.TryDecode(code, out var id)) return null;
-
-        var record = await repository.GetUrlById(id);
+        var record = await ResolveByCode(code);
         if (record is null) return null;
 
         var platform = DetectPlatform(userAgent);
         var matchedTarget = record.PlatformTargets.FirstOrDefault(t => t.Platform == platform);
         var destination = matchedTarget?.Url ?? record.OriginalUrl;
 
+        // Deactivated links 410 instead of redirecting, so they shouldn't rack up clicks either.
         if (record.IsActive)
         {
-            await repository.RecordVisit(id, matchedTarget?.Platform);
+            await repository.RecordVisit(record.Id, matchedTarget?.Platform);
         }
 
         return new RedirectTarget(record.IsActive, destination);
     }
+
+    // A code is either a custom name someone chose, or the base62 encoding of the row id.
+    private async Task<UrlRecord?> ResolveByCode(string code)
+    {
+        var byCustomCode = await repository.GetUrlByCustomCode(code);
+        if (byCustomCode is not null) return byCustomCode;
+
+        return base62.TryDecode(code, out var id) ? await repository.GetUrlById(id) : null;
+    }
+
+    // Rejects a custom name that's already taken, either as another link's custom name
+    // or as another link's auto-generated base62 code (which would make that code ambiguous).
+    private async Task<string> ValidateCustomCode(string customCode, long? currentId)
+    {
+        if (!CustomCodePattern().IsMatch(customCode))
+        {
+            throw new InvalidUrlException("custom name may only contain letters, numbers, hyphens, and underscores");
+        }
+
+        var byCustomCode = await repository.GetUrlByCustomCode(customCode);
+        if (byCustomCode is not null && byCustomCode.Id != currentId)
+        {
+            throw new InvalidUrlException($"This custom name \"{customCode}\" is already taken.");
+        }
+
+        if (base62.TryDecode(customCode, out var decodedId))
+        {
+            var byId = await repository.GetUrlById(decodedId);
+            if (byId is not null && byId.Id != currentId)
+            {
+                throw new InvalidUrlException($"This custom name \"{customCode}\" is already taken.");
+            }
+        }
+
+        return customCode;
+    }
+
+    [GeneratedRegex("^[A-Za-z0-9_-]{1,64}$")]
+    private static partial Regex CustomCodePattern();
 
     // Only android/ios are recognized today; unmatched user agents fall back to the default URL.
     private static string? DetectPlatform(string? userAgent)
@@ -78,7 +131,7 @@ public class UrlService(IUrlRepository repository, IBase62Service base62, IConfi
 
     private UrlResponse ToResponse(UrlRecord record)
     {
-        var code = base62.Encode(record.Id);
+        var code = record.CustomCode ?? base62.Encode(record.Id);
         return new UrlResponse(
             record.Id,
             code,
@@ -88,6 +141,7 @@ public class UrlService(IUrlRepository repository, IBase62Service base62, IConfi
             record.CreatedAt,
             record.UpdatedAt,
             record.ViewCount,
+            record.CustomCode,
             record.PlatformTargets);
     }
 

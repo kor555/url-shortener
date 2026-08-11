@@ -85,6 +85,36 @@ h1 {
   font-size: 0.95rem;
 }
 
+.custom-code-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.link-button {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #2563eb;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.custom-code-field input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
 .shorten-form button[type='submit'] {
   align-self: flex-start;
   padding: 0.65rem 1.25rem;

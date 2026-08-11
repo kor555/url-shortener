@@ -28,16 +28,31 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
 
             ALTER TABLE urls ADD COLUMN IF NOT EXISTS view_count BIGINT NOT NULL DEFAULT 0;
             ALTER TABLE url_platform_targets ADD COLUMN IF NOT EXISTS click_count BIGINT NOT NULL DEFAULT 0;
+            ALTER TABLE urls ADD COLUMN IF NOT EXISTS custom_code TEXT;
+
+            CREATE UNIQUE INDEX IF NOT EXISTS urls_custom_code_key ON urls (custom_code) WHERE custom_code IS NOT NULL;
             """;
         await cmd.ExecuteNonQueryAsync();
     }
 
-    public async Task<UrlRecord> InsertUrl(string originalUrl, IReadOnlyList<PlatformTarget> platformTargets)
+    public async Task<UrlRecord> InsertUrl(string originalUrl, IReadOnlyList<PlatformTarget> platformTargets, string? customCode)
     {
         await using var conn = await db.OpenConnectionAsync();
         await using var transaction = await conn.BeginTransactionAsync();
 
-        var row = await InsertUrlRow(conn, transaction, originalUrl);
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = """
+            INSERT INTO urls (original_url, custom_code) VALUES ($1, $2)
+            RETURNING id, original_url, is_active, created_at, updated_at, view_count, custom_code
+            """;
+        cmd.Parameters.AddWithValue(originalUrl);
+        cmd.Parameters.AddWithValue((object?)customCode ?? DBNull.Value);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        await reader.ReadAsync();
+        var row = MapRow(reader, []);
+        await reader.DisposeAsync();
+
         await ReplacePlatformTargets(conn, transaction, row.Id, platformTargets);
 
         await transaction.CommitAsync();
@@ -51,7 +66,7 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
         var rows = new List<UrlRecord>();
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = "SELECT id, original_url, is_active, created_at, updated_at, view_count FROM urls ORDER BY id DESC";
+            cmd.CommandText = "SELECT id, original_url, is_active, created_at, updated_at, view_count, custom_code FROM urls ORDER BY id DESC";
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
@@ -71,14 +86,30 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
     public async Task<UrlRecord?> GetUrlById(long id)
     {
         await using var conn = await db.OpenConnectionAsync();
-        var row = await SelectUrlRow(conn, id);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, original_url, is_active, created_at, updated_at, view_count, custom_code FROM urls WHERE id = $1";
+        cmd.Parameters.AddWithValue(id);
+        var row = await SelectOneUrlRow(cmd);
         if (row is null) return null;
 
         var targets = await GetPlatformTargets(conn, id);
         return row with { PlatformTargets = targets };
     }
 
-    public async Task<UrlRecord?> UpdateUrl(long id, string? originalUrl, bool? isActive, IReadOnlyList<PlatformTarget>? platformTargets)
+    public async Task<UrlRecord?> GetUrlByCustomCode(string customCode)
+    {
+        await using var conn = await db.OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, original_url, is_active, created_at, updated_at, view_count, custom_code FROM urls WHERE custom_code = $1";
+        cmd.Parameters.AddWithValue(customCode);
+        var row = await SelectOneUrlRow(cmd);
+        if (row is null) return null;
+
+        var targets = await GetPlatformTargets(conn, row.Id);
+        return row with { PlatformTargets = targets };
+    }
+
+    public async Task<UrlRecord?> UpdateUrl(long id, string? originalUrl, bool? isActive, IReadOnlyList<PlatformTarget>? platformTargets, string? customCode)
     {
         await using var conn = await db.OpenConnectionAsync();
         await using var transaction = await conn.BeginTransactionAsync();
@@ -89,13 +120,19 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
             UPDATE urls
             SET original_url = COALESCE($1, original_url),
                 is_active = COALESCE($2, is_active),
+                custom_code = CASE
+                    WHEN $4::text IS NULL THEN custom_code
+                    WHEN $4::text = '' THEN NULL
+                    ELSE $4::text
+                END,
                 updated_at = now()
             WHERE id = $3
-            RETURNING id, original_url, is_active, created_at, updated_at, view_count
+            RETURNING id, original_url, is_active, created_at, updated_at, view_count, custom_code
             """;
         cmd.Parameters.AddWithValue((object?)originalUrl ?? DBNull.Value);
         cmd.Parameters.AddWithValue((object?)isActive ?? DBNull.Value);
         cmd.Parameters.AddWithValue(id);
+        cmd.Parameters.AddWithValue((object?)customCode ?? DBNull.Value);
 
         UrlRecord? row = null;
         await using (var reader = await cmd.ExecuteReaderAsync())
@@ -160,25 +197,8 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
         await transaction.CommitAsync();
     }
 
-    private static async Task<UrlRecord> InsertUrlRow(NpgsqlConnection conn, NpgsqlTransaction transaction, string originalUrl)
+    private static async Task<UrlRecord?> SelectOneUrlRow(NpgsqlCommand cmd)
     {
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = transaction;
-        cmd.CommandText = """
-            INSERT INTO urls (original_url) VALUES ($1)
-            RETURNING id, original_url, is_active, created_at, updated_at, view_count
-            """;
-        cmd.Parameters.AddWithValue(originalUrl);
-        await using var reader = await cmd.ExecuteReaderAsync();
-        await reader.ReadAsync();
-        return MapRow(reader, []);
-    }
-
-    private static async Task<UrlRecord?> SelectUrlRow(NpgsqlConnection conn, long id)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, original_url, is_active, created_at, updated_at, view_count FROM urls WHERE id = $1";
-        cmd.Parameters.AddWithValue(id);
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? MapRow(reader, []) : null;
     }
@@ -225,5 +245,6 @@ public class UrlRepository(NpgsqlDataSource db) : IUrlRepository
         reader.GetFieldValue<DateTimeOffset>(3),
         reader.GetFieldValue<DateTimeOffset>(4),
         reader.GetInt64(5),
+        reader.IsDBNull(6) ? null : reader.GetString(6),
         platformTargets);
 }
