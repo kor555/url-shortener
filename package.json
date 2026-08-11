@@ -11,7 +11,8 @@
     "dev:backend": "dotnet watch run --project backend/UrlShortener.Api",
     "build": "npm run build --workspace=frontend && dotnet build",
     "build:frontend": "npm run build --workspace=frontend",
-    "build:backend": "dotnet build"
+    "build:backend": "dotnet build",
+    "test": "dotnet test backend/UrlShortener.Api.Tests"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
