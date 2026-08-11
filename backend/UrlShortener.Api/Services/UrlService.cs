@@ -57,7 +57,10 @@ public class UrlService(IUrlRepository repository, IBase62Service base62, IConfi
         var matchedTarget = record.PlatformTargets.FirstOrDefault(t => t.Platform == platform);
         var destination = matchedTarget?.Url ?? record.OriginalUrl;
 
-        await repository.RecordVisit(id, matchedTarget?.Platform);
+        if (record.IsActive)
+        {
+            await repository.RecordVisit(id, matchedTarget?.Platform);
+        }
 
         return new RedirectTarget(record.IsActive, destination);
     }
