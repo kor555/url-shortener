@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import './App.css';
 
+interface PlatformTarget {
+  platform: string;
+  url: string;
+}
+
 interface UrlItem {
   id: number;
   code: string;
@@ -10,15 +15,96 @@ interface UrlItem {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  platformTargets: PlatformTarget[];
+}
+
+type LinkMode = 'single' | 'platform';
+
+const findTarget = (targets: PlatformTarget[], platform: string) =>
+  targets.find((t) => t.platform === platform)?.url ?? '';
+
+const buildPlatformTargets = (androidUrl: string, iosUrl: string): PlatformTarget[] => {
+  const targets: PlatformTarget[] = [];
+  if (androidUrl.trim()) targets.push({ platform: 'android', url: androidUrl.trim() });
+  if (iosUrl.trim()) targets.push({ platform: 'ios', url: iosUrl.trim() });
+  return targets;
+};
+
+function ModeTabs({ mode, onChange }: { mode: LinkMode; onChange: (mode: LinkMode) => void }) {
+  return (
+    <div className="mode-tabs" role="tablist">
+      <button
+        type="button"
+        role="tab"
+        className={mode === 'single' ? 'active' : ''}
+        aria-selected={mode === 'single'}
+        onClick={() => onChange('single')}
+      >
+        Single destination
+      </button>
+      <button
+        type="button"
+        role="tab"
+        className={mode === 'platform' ? 'active' : ''}
+        aria-selected={mode === 'platform'}
+        onClick={() => onChange('platform')}
+      >
+        Platform-specific
+      </button>
+    </div>
+  );
+}
+
+function PlatformFields({
+  androidUrl,
+  iosUrl,
+  onAndroidChange,
+  onIosChange,
+}: {
+  androidUrl: string;
+  iosUrl: string;
+  onAndroidChange: (value: string) => void;
+  onIosChange: (value: string) => void;
+}) {
+  return (
+    <div className="platform-fields">
+      <label>
+        Android
+        <input
+          type="text"
+          placeholder="play.google.com/store/apps/..."
+          value={androidUrl}
+          onChange={(e) => onAndroidChange(e.target.value)}
+        />
+      </label>
+      <label>
+        iOS
+        <input
+          type="text"
+          placeholder="apps.apple.com/app/..."
+          value={iosUrl}
+          onChange={(e) => onIosChange(e.target.value)}
+        />
+      </label>
+    </div>
+  );
 }
 
 function App() {
   const [items, setItems] = useState<UrlItem[]>([]);
-  const [originalUrl, setOriginalUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const [createMode, setCreateMode] = useState<LinkMode>('single');
+  const [originalUrl, setOriginalUrl] = useState('');
+  const [androidUrl, setAndroidUrl] = useState('');
+  const [iosUrl, setIosUrl] = useState('');
+
   const [editingCode, setEditingCode] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState<LinkMode>('single');
   const [editValue, setEditValue] = useState('');
+  const [editAndroidUrl, setEditAndroidUrl] = useState('');
+  const [editIosUrl, setEditIosUrl] = useState('');
 
   const loadItems = () => {
     fetch('/api/urls')
@@ -39,10 +125,11 @@ function App() {
     setError(null);
     setSubmitting(true);
     try {
+      const platformTargets = createMode === 'platform' ? buildPlatformTargets(androidUrl, iosUrl) : [];
       const res = await fetch('/api/urls', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ originalUrl }),
+        body: JSON.stringify({ originalUrl, platformTargets }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -51,6 +138,8 @@ function App() {
       const created = (await res.json()) as UrlItem;
       setItems((prev) => [created, ...prev]);
       setOriginalUrl('');
+      setAndroidUrl('');
+      setIosUrl('');
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -76,21 +165,27 @@ function App() {
 
   const startEdit = (item: UrlItem) => {
     setEditingCode(item.code);
+    setEditMode(item.platformTargets.length > 0 ? 'platform' : 'single');
     setEditValue(item.originalUrl);
+    setEditAndroidUrl(findTarget(item.platformTargets, 'android'));
+    setEditIosUrl(findTarget(item.platformTargets, 'ios'));
   };
 
   const cancelEdit = () => {
     setEditingCode(null);
     setEditValue('');
+    setEditAndroidUrl('');
+    setEditIosUrl('');
   };
 
   const saveEdit = async (item: UrlItem) => {
     setError(null);
     try {
+      const platformTargets = editMode === 'platform' ? buildPlatformTargets(editAndroidUrl, editIosUrl) : [];
       const res = await fetch(`/api/urls/${item.code}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ originalUrl: editValue }),
+        body: JSON.stringify({ originalUrl: editValue, platformTargets }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -125,14 +220,29 @@ function App() {
       <h1>URL Shortener</h1>
       <p className="subtitle">Shorten a link, then edit, deactivate, or delete it anytime.</p>
 
+      <ModeTabs mode={createMode} onChange={setCreateMode} />
+
       <form className="shorten-form" onSubmit={handleSubmit}>
-        <input
-          type="text"
-          placeholder="example.com/very/long/path"
-          value={originalUrl}
-          onChange={(e) => setOriginalUrl(e.target.value)}
-          required
-        />
+        <div className="url-field">
+          {createMode === 'platform' && <label>Default destination (fallback)</label>}
+          <input
+            type="text"
+            placeholder="example.com/very/long/path"
+            value={originalUrl}
+            onChange={(e) => setOriginalUrl(e.target.value)}
+            required
+          />
+        </div>
+
+        {createMode === 'platform' && (
+          <PlatformFields
+            androidUrl={androidUrl}
+            iosUrl={iosUrl}
+            onAndroidChange={setAndroidUrl}
+            onIosChange={setIosUrl}
+          />
+        )}
+
         <button type="submit" disabled={submitting}>
           {submitting ? 'Shortening…' : 'Shorten'}
         </button>
@@ -153,18 +263,31 @@ function App() {
             </div>
 
             {editingCode === item.code ? (
-              <div className="edit-row">
-                <input
-                  type="text"
-                  value={editValue}
-                  onChange={(e) => setEditValue(e.target.value)}
-                />
-                <button type="button" onClick={() => saveEdit(item)}>
-                  Save
-                </button>
-                <button type="button" onClick={cancelEdit}>
-                  Cancel
-                </button>
+              <div className="edit-section">
+                <ModeTabs mode={editMode} onChange={setEditMode} />
+
+                <div className="edit-row">
+                  <input
+                    type="text"
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                  />
+                  <button type="button" onClick={() => saveEdit(item)}>
+                    Save
+                  </button>
+                  <button type="button" onClick={cancelEdit}>
+                    Cancel
+                  </button>
+                </div>
+
+                {editMode === 'platform' && (
+                  <PlatformFields
+                    androidUrl={editAndroidUrl}
+                    iosUrl={editIosUrl}
+                    onAndroidChange={setEditAndroidUrl}
+                    onIosChange={setEditIosUrl}
+                  />
+                )}
               </div>
             ) : (
               <div className="original-row">
@@ -173,6 +296,16 @@ function App() {
                   Edit
                 </button>
               </div>
+            )}
+
+            {editingCode !== item.code && item.platformTargets.length > 0 && (
+              <ul className="platform-list">
+                {item.platformTargets.map((target) => (
+                  <li key={target.platform}>
+                    <strong>{target.platform}:</strong> {target.url}
+                  </li>
+                ))}
+              </ul>
             )}
 
             <div className="actions-row">

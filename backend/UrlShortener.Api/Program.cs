@@ -1,4 +1,5 @@
 using UrlShortener.Api.DTOs;
+using UrlShortener.Api.Handlers;
 using UrlShortener.Api.Repositories;
 using UrlShortener.Api.Services;
 
@@ -40,60 +41,19 @@ else
 app.UseCors();
 
 var api = app.MapGroup("/api");
-api.MapGet("/health", () => Results.Ok(new
-{
-    status = "healthy",
-    service = "UrlShortener.Api"
-}))
-.WithName("GetHealth");
+api.MapGet("/health", HealthHandler.GetHealth)
+    .WithName("GetHealth");
 
 var urls = api.MapGroup("/urls");
 
-urls.MapPost("/", async (CreateUrlRequest request, IUrlService service) =>
-{
-    try
-    {
-        var response = await service.CreateUrl(request.OriginalUrl);
-        return Results.Created($"/api/urls/{response.Code}", response);
-    }
-    catch (InvalidUrlException ex)
-    {
-        return Results.BadRequest(new { error = ex.Message });
-    }
-});
-
-urls.MapGet("/", async (IUrlService service) => Results.Ok(await service.ListUrls()));
-
-urls.MapGet("/{code}", async (string code, IUrlService service) =>
-{
-    var response = await service.GetUrl(code);
-    return response is null ? Results.NotFound() : Results.Ok(response);
-});
-
-urls.MapPut("/{code}", async (string code, UpdateUrlRequest request, IUrlService service) =>
-{
-    try
-    {
-        var response = await service.UpdateUrl(code, request.OriginalUrl, request.IsActive);
-        return response is null ? Results.NotFound() : Results.Ok(response);
-    }
-    catch (InvalidUrlException ex)
-    {
-        return Results.BadRequest(new { error = ex.Message });
-    }
-});
-
-urls.MapDelete("/{code}", async (string code, IUrlService service) =>
-    await service.DeleteUrl(code) ? Results.NoContent() : Results.NotFound());
+urls.MapPost("/", UrlHandler.CreateUrl)
+    .WithName("CreateUrl");
+urls.MapGet("/", UrlHandler.ListUrls);
+urls.MapGet("/{code}", UrlHandler.GetUrl);
+urls.MapPut("/{code}", UrlHandler.UpdateUrl);
+urls.MapDelete("/{code}", UrlHandler.DeleteUrl);
 
 // Redirect endpoint lives at the root so short links look like gul.fy/{code}, not gul.fy/api/urls/{code}.
-app.MapGet("/{code}", async (string code, IUrlService service) =>
-{
-    var record = await service.GetRedirectTarget(code);
-    if (record is null) return Results.NotFound();
-    if (!record.IsActive) return Results.StatusCode(StatusCodes.Status410Gone);
-
-    return Results.Redirect(record.OriginalUrl);
-});
+app.MapGet("/{code}", UrlHandler.RedirectToDestination);
 
 app.Run();

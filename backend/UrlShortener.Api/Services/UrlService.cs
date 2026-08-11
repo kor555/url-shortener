@@ -8,10 +8,11 @@ public class UrlService(IUrlRepository repository, IBase62Service base62, IConfi
 {
     private string BaseUrl => configuration["ShortUrl:BaseUrl"] ?? "http://localhost:5104";
 
-    public async Task<UrlResponse> CreateUrl(string originalUrl)
+    public async Task<UrlResponse> CreateUrl(string originalUrl, IReadOnlyList<PlatformTarget>? platformTargets = null)
     {
         var normalized = NormalizeUrl(originalUrl);
-        var record = await repository.InsertUrl(normalized);
+        var normalizedTargets = NormalizePlatformTargets(platformTargets);
+        var record = await repository.InsertUrl(normalized, normalizedTargets);
         return ToResponse(record);
     }
 
@@ -29,12 +30,13 @@ public class UrlService(IUrlRepository repository, IBase62Service base62, IConfi
         return record is null ? null : ToResponse(record);
     }
 
-    public async Task<UrlResponse?> UpdateUrl(string code, string? originalUrl, bool? isActive)
+    public async Task<UrlResponse?> UpdateUrl(string code, string? originalUrl, bool? isActive, IReadOnlyList<PlatformTarget>? platformTargets = null)
     {
         if (!base62.TryDecode(code, out var id)) return null;
 
         var normalized = originalUrl is null ? null : NormalizeUrl(originalUrl);
-        var record = await repository.UpdateUrl(id, normalized, isActive);
+        var normalizedTargets = platformTargets is null ? null : NormalizePlatformTargets(platformTargets);
+        var record = await repository.UpdateUrl(id, normalized, isActive, normalizedTargets);
         return record is null ? null : ToResponse(record);
     }
 
@@ -44,10 +46,27 @@ public class UrlService(IUrlRepository repository, IBase62Service base62, IConfi
         return await repository.DeleteUrl(id);
     }
 
-    public async Task<UrlRecord?> GetRedirectTarget(string code)
+    public async Task<RedirectTarget?> GetRedirectTarget(string code, string? userAgent)
     {
         if (!base62.TryDecode(code, out var id)) return null;
-        return await repository.GetUrlById(id);
+
+        var record = await repository.GetUrlById(id);
+        if (record is null) return null;
+
+        var platform = DetectPlatform(userAgent);
+        var destination = record.PlatformTargets.FirstOrDefault(t => t.Platform == platform)?.Url ?? record.OriginalUrl;
+        return new RedirectTarget(record.IsActive, destination);
+    }
+
+    // Only android/ios are recognized today; unmatched user agents fall back to the default URL.
+    private static string? DetectPlatform(string? userAgent)
+    {
+        if (string.IsNullOrEmpty(userAgent)) return null;
+        if (userAgent.Contains("Android", StringComparison.OrdinalIgnoreCase)) return "android";
+        if (userAgent.Contains("iPhone", StringComparison.OrdinalIgnoreCase) ||
+            userAgent.Contains("iPad", StringComparison.OrdinalIgnoreCase) ||
+            userAgent.Contains("iPod", StringComparison.OrdinalIgnoreCase)) return "ios";
+        return null;
     }
 
     private UrlResponse ToResponse(UrlRecord record)
@@ -60,7 +79,25 @@ public class UrlService(IUrlRepository repository, IBase62Service base62, IConfi
             record.OriginalUrl,
             record.IsActive,
             record.CreatedAt,
-            record.UpdatedAt);
+            record.UpdatedAt,
+            record.PlatformTargets);
+    }
+
+    private static IReadOnlyList<PlatformTarget> NormalizePlatformTargets(IReadOnlyList<PlatformTarget>? targets)
+    {
+        if (targets is null || targets.Count == 0) return [];
+
+        var seenPlatforms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var normalized = new List<PlatformTarget>();
+        foreach (var target in targets)
+        {
+            var platform = target.Platform.Trim().ToLowerInvariant();
+            if (platform.Length == 0) throw new InvalidUrlException("platform name cannot be empty");
+            if (!seenPlatforms.Add(platform)) throw new InvalidUrlException($"duplicate platform target: {platform}");
+
+            normalized.Add(new PlatformTarget(platform, NormalizeUrl(target.Url)));
+        }
+        return normalized;
     }
 
     private static string NormalizeUrl(string input)
