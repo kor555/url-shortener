@@ -1,0 +1,31 @@
+create monorepo project with react typescript + .net
+
+The monorepo is set up and both projects build successfully.
+
+Structure
+url-shortener/
+├── frontend/                 # React + TypeScript (Vite)
+│   └── src/App.tsx           # Calls /api/health
+├── backend/
+│   └── UrlShortener.Api/     # ASP.NET Core Web API (.NET 10)
+├── package.json              # Root scripts + npm workspaces
+├── UrlShortener.slnx         # .NET solution
+├── .gitignore
+└── README.md
+What's included
+Frontend — React 18 + TypeScript + Vite on port 5173, with a dev proxy for /api/* → backend.
+
+Backend — ASP.NET Core minimal API on port 5104, with:
+
+CORS for the Vite dev server
+GET /api/health endpoint
+OpenAPI in development
+Commands
+npm install          # install root + frontend deps
+npm run dev          # run frontend + backend together
+npm run build        # build both projects
+Or run separately:
+
+npm run dev:frontend   # http://localhost:5173
+npm run dev:backend    # http://localhost:5104
+The frontend shows API status by calling the backend health endpoint through the Vite proxy. You can extend from here with URL shortening logic on the .NET side and UI on the React side.
